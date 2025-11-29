@@ -1,5 +1,5 @@
-# not working don't use it'
- machine import Pin, Timer
+# not working
+from machine import Pin, Timer
 import time
 import rp2
 
