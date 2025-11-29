@@ -88,6 +88,7 @@ def read_weight(hx, calibration_factor):
     try:
         raw_value = hx.read()
         weight_grams = raw_value / calibration_factor
+        print("Weight: {:.2f}".format(weight_grams))
         return max(0, weight_grams)  # Don't return negative weights
     except:
         return 0
