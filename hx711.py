@@ -1,79 +1,107 @@
-# hx711.py - MicroPython driver for HX711 load cell amplifier
-# Works with Raspberry Pi Pico - works as of 29/11/2025
-# Author: Adapted for clarity and robustness
+"""
+HX711 Load Cell Amplifier Driver for Raspberry Pi Pico
+Save as: hx711.py
+"""
 
-from machine import Pin
 import time
+from machine import Pin
 
 
 class HX711:
-    def __init__(self, dout, pd_sck, gain=128):
-        self.PD_SCK = Pin(pd_sck, Pin.OUT)
-        self.DOUT = Pin(dout, Pin.IN, pull=None)
-
-        self.GAIN = 0
-        self.OFFSET = 0
-        self.SCALE = 1
-
-        self.set_gain(gain)
-
-    def set_gain(self, gain):
-        if gain == 128:
-            self.GAIN = 1
-        elif gain == 64:
-            self.GAIN = 3
-        elif gain == 32:
-            self.GAIN = 2
-        else:
-            raise ValueError("Gain must be 128, 64, or 32")
-        self.read()
+    def __init__(self, dt_pin, sck_pin):
+        """
+        Initialize HX711
+        dt_pin: Data pin number
+        sck_pin: Clock pin number
+        """
+        self.dt = Pin(dt_pin, Pin.IN)
+        self.sck = Pin(sck_pin, Pin.OUT, value=0)
+        self.tare_value = 0
 
     def is_ready(self):
-        return self.DOUT.value() == 0
+        """Check if HX711 is ready to send data"""
+        return self.dt.value() == 0
 
-    def read(self):
-        # Wait until HX711 is ready
+    def wait_ready(self, timeout=1.0):
+        """Wait for HX711 to be ready"""
+        start = time.time()
         while not self.is_ready():
-            time.sleep_us(10)
+            if time.time() - start > timeout:
+                return False
+            time.sleep(0.001)
+        return True
 
-        data = 0
+    def read_raw(self):
+        """Read raw 24-bit value from HX711"""
+        if not self.wait_ready():
+            return 0
+
+        # Read 24 bits
+        value = 0
         for _ in range(24):
-            self.PD_SCK.value(1)
-            data = (data << 1) | self.DOUT.value()
-            self.PD_SCK.value(0)
+            self.sck.value(1)
+            time.sleep_us(1)
+            value = (value << 1) | self.dt.value()
+            self.sck.value(0)
+            time.sleep_us(1)
 
-        # Set channel and gain factor for next reading
-        for _ in range(self.GAIN):
-            self.PD_SCK.value(1)
-            self.PD_SCK.value(0)
+        # Pulse SCK one more time to set gain to 128 for next reading
+        self.sck.value(1)
+        time.sleep_us(1)
+        self.sck.value(0)
 
-        # Convert from 24-bit two's complement
-        if data & 0x800000:
-            data |= ~0xffffff
-        return data
+        # Convert from 24-bit two's complement to signed integer
+        if value & 0x800000:
+            value -= 0x1000000
 
-    def read_average(self, times=3):
-        if times <= 0:
-            raise ValueError("times must be > 0")
-        sum_val = 0
-        for _ in range(times):
-            sum_val += self.read()
-        return sum_val // times
+        return value
 
-    def tare(self, times=15):
-        self.OFFSET = self.read_average(times)
+    def read(self, samples=5):
+        """
+        Read average value over multiple samples
+        samples: number of samples to average
+        """
+        values = []
+        for _ in range(samples):
+            val = self.read_raw()
+            if val != 0:  # Only include valid readings
+                values.append(val)
+            time.sleep(0.01)
 
-    def set_scale(self, scale):
-        self.SCALE = scale
+        if not values:
+            return 0
 
-    def get_units(self, times=3):
-        value = self.read_average(times) - self.OFFSET
-        return value / self.SCALE
+        # Remove outliers (simple approach: remove min and max if we have enough samples)
+        if len(values) >= 5:
+            values.remove(min(values))
+            values.remove(max(values))
+
+        return sum(values) / len(values) - self.tare_value
+
+    def tare(self, samples=10):
+        """
+        Zero the scale by setting current reading as baseline
+        samples: number of samples to average for tare
+        """
+        values = []
+        for _ in range(samples):
+            val = self.read_raw()
+            if val != 0:
+                values.append(val)
+            time.sleep(0.05)
+
+        if values:
+            self.tare_value = sum(values) / len(values)
+        else:
+            self.tare_value = 0
 
     def power_down(self):
-        self.PD_SCK.value(0)
-        self.PD_SCK.value(1)
-        time.sleep_us(70)
+        """Put HX711 in power-down mode"""
+        self.sck.value(0)
+        self.sck.value(1)
+        time.sleep_us(60)
 
     def power_up(self):
-        self.PD_SCK.value(0)
+        """Wake HX711 from power-down mode"""
+        self.sck.value(0)
+        time.sleep_us(1)

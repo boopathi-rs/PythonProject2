@@ -5,7 +5,7 @@ from machine import I2C
 from lcd_api import LcdApi
 from pico_i2c_lcd import I2cLcd
 # from hx711 import HX711
-from hx711_pio import HX711
+# from hx711_pio import HX711
 from machine import Pin
 
 
